@@ -1369,7 +1369,7 @@ ${a.decision ? `<div class="decision-box">
           +'<td style="color:var(--green);font-family:monospace">'+(r.outTime||'—')+'</td>'
           +'<td style="font-size:12px">'+(r.workHours||'—')+'</td>'
           +'<td>'+badge+'</td>'
-          +(isOp?'<td><button onclick="openEditAttend(''+r.uid+'',''+r.date+'')" style="background:rgba(79,140,255,.1);color:var(--accent);border:1px solid rgba(79,140,255,.25);border-radius:6px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">수정</button></td>':'<td></td>')
+          +(isOp?('<td><button onclick="openEditAttend(\'' +r.uid+ '\'\,\'' +r.date+ '\')" style="background:rgba(79,140,255,.1);color:var(--accent);border:1px solid rgba(79,140,255,.25);border-radius:6px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">수정</button></td>'):'<td></td>')
           +'</tr>';
       }).join('') : '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text2)">데이터 없음</td></tr>';
     }
