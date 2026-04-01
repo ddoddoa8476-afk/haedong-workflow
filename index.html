@@ -1334,6 +1334,7 @@ ${a.decision ? `<div class="decision-box">
 
   // 전체 직원 일별 근태 조회
   window.loadAttendAll = async () => {
+    const isOp = ['admin','subadmin','operator'].includes(currentUserProfile?.role);
     const ym = $('attend-all-month')?.value || new Date().toISOString().slice(0,7);
     const startDate = new Date(ym+'-01');
     const endDate = new Date(startDate.getFullYear(), startDate.getMonth()+1, 0);
@@ -1367,12 +1368,80 @@ ${a.decision ? `<div class="decision-box">
           +'<td style="color:var(--accent);font-family:monospace">'+(r.inTime||'—')+'</td>'
           +'<td style="color:var(--green);font-family:monospace">'+(r.outTime||'—')+'</td>'
           +'<td style="font-size:12px">'+(r.workHours||'—')+'</td>'
-          +'<td>'+badge+'</td></tr>';
+          +'<td>'+badge+'</td>'
+          +(isOp?'<td><button onclick="openEditAttend(''+r.uid+'',''+r.date+'')" style="background:rgba(79,140,255,.1);color:var(--accent);border:1px solid rgba(79,140,255,.25);border-radius:6px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">수정</button></td>':'<td></td>')
+          +'</tr>';
       }).join('') : '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text2)">데이터 없음</td></tr>';
     }
   };
 
   // 전체 직원 월별 근태 엑셀 (일별 상세)
+  window.openEditAttend = async (uid, date) => {
+    $('ea-uid').value = uid;
+    $('ea-date').value = date;
+    // 기존 데이터 불러오기
+    const snap = await getDoc(doc(db,'attendance',uid+'_'+date));
+    const r = snap.exists() ? snap.data() : {};
+    $('ea-in').value = r.inTime ? r.inTime.slice(0,5) : '';
+    $('ea-out').value = r.outTime ? r.outTime.slice(0,5) : '';
+    // 직원 이름 표시
+    const uSnap = await getDoc(doc(db,'users',uid));
+    const uName = uSnap.exists() ? uSnap.data().name||uSnap.data().email : uid;
+    $('ea-title').textContent = uName+' · '+date+' 근태 수정';
+    openModal('modal-edit-attend');
+  };
+
+  window.submitEditAttend = async () => {
+    const uid = $('ea-uid').value;
+    const date = $('ea-date').value;
+    const inTime = $('ea-in').value;
+    const outTime = $('ea-out').value;
+    if (!inTime) return showToast('출근 시각을 입력하세요','err');
+
+    const uSnap = await getDoc(doc(db,'users',uid));
+    const uData = uSnap.exists()?uSnap.data():{};
+    const wtype = uData.workType||'office';
+    const cfgSnap = await getDoc(doc(db,'settings','attend_'+wtype));
+    const baseOut = cfgSnap.exists()?(cfgSnap.data().outTime||'17:00'):'17:00';
+    const baseIn = cfgSnap.exists()?(cfgSnap.data().inTime||'07:00'):'07:00';
+
+    // 지각 계산
+    const [stdH,stdM] = baseIn.split(':').map(Number);
+    const [inH,inM] = inTime.split(':').map(Number);
+    const isLate = (inH*60+inM) > (stdH*60+stdM);
+    const status = isLate?'지각':'정상';
+
+    // 근무시간 계산
+    let workHours = '—', otHours = 0;
+    if (outTime) {
+      const [oh,om] = outTime.split(':').map(Number);
+      const [ih,im] = inTime.split(':').map(Number);
+      const mins = (oh*60+om)-(ih*60+im);
+      if (mins>0) workHours = Math.floor(mins/60)+'시간 '+mins%60+'분';
+      otHours = calcOT(outTime, baseOut);
+    }
+
+    await setDoc(doc(db,'attendance',uid+'_'+date), {
+      uid, name:uData.name||uData.email||uid,
+      dept:uData.dept||'', date,
+      inTime:inTime+':00', outTime:outTime?outTime+':00':'',
+      workHours, status, otHours, baseOut,
+      updatedAt:serverTimestamp(), manualEntry:true
+    }, {merge:true});
+
+    if (outTime && otHours>0) {
+      await setDoc(doc(db,'overtime',uid+'_'+date),{
+        uid, name:uData.name||uData.email||uid,
+        dept:uData.dept||'', workType:wtype,
+        date, outTime, baseOut, otHours,
+        memo:'관리자 수정', createdAt:serverTimestamp(), manualEntry:true
+      },{merge:true});
+    }
+    closeModal('modal-edit-attend');
+    showToast('✅ 근태가 수정되었습니다');
+    loadAttendAll();
+  };
+
   window.exportMonthAttendAll = async () => {
     const ym = $('attend-all-month')?.value || new Date().toISOString().slice(0,7);
     const startDate = new Date(ym+'-01');
@@ -2837,6 +2906,37 @@ ${a.decision ? `<div class="decision-box">
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-edit-attend')">취소</button>
       <button class="btn btn-primary" onclick="submitEditAttend()">저장 (자동 계산)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 모달: 근태 수정 (관리자) ═══════════════════════════ -->
+<div class="modal-overlay" id="modal-edit-attend">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="ea-title">근태 수정</div>
+      <div class="modal-close" onclick="closeModal('modal-edit-attend')">✕</div>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ea-uid">
+      <input type="hidden" id="ea-date">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">출근 시각</label>
+          <input type="time" class="time-input" id="ea-in" style="width:100%">
+        </div>
+        <div class="form-group">
+          <label class="form-label">퇴근 시각</label>
+          <input type="time" class="time-input" id="ea-out" style="width:100%">
+        </div>
+      </div>
+      <div style="background:rgba(79,140,255,.08);border:1px solid rgba(79,140,255,.2);border-radius:8px;padding:11px;font-size:12px;color:var(--text2);line-height:1.7">
+        💡 퇴근 시각 입력 시 시간외근무가 자동 계산됩니다
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-edit-attend')">취소</button>
+      <button class="btn btn-primary" onclick="submitEditAttend()">저장</button>
     </div>
   </div>
 </div>
